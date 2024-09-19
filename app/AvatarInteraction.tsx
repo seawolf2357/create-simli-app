@@ -87,39 +87,42 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
     }
   }, [simli_faceid]);
 
-  const startConversation = useCallback(async () => {
-    console.log('Starting conversation...');
-    try {
-      const response = await fetch(`${BACKEND_URL}/start-conversation`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: initialPrompt,
-          voiceId: elevenlabs_voiceid
-        }),
-      });
+const startConversation = useCallback(async () => {
+  console.log('Starting conversation...');
+  try {
+    const response = await fetch(`${BACKEND_URL}/start-conversation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: initialPrompt,
+        voiceId: elevenlabs_voiceid
+      }),
+    });
 
-      console.log('Response status:', response.status);
+    console.log('Response status:', response.status);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
-        throw new Error(errorText || 'Failed to start conversation');
-      }
-
-      const data = await response.json();
-      console.log('Conversation started:', data);
-      setConnectionId(data.connectionId);
-
-      initializeWebSocket(data.connectionId);
-    } catch (error) {
-      console.error('Error starting conversation:', error);
-      setError(`Failed to start conversation: ${error.message}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Error response:', errorText);
+      throw new Error(errorText || 'Failed to start conversation');
     }
-  }, [initialPrompt, elevenlabs_voiceid]);
 
+    const data = await response.json();
+    console.log('Conversation started:', data);
+    setConnectionId(data.connectionId);
+
+    initializeWebSocket(data.connectionId);
+  } catch (error: unknown) {
+    console.error('Error starting conversation:', error);
+    if (error instanceof Error) {
+      setError(`Failed to start conversation: ${error.message}`);
+    } else {
+      setError('Failed to start conversation: Unknown error');
+    }
+  }
+}, [initialPrompt, elevenlabs_voiceid]);
   const initializeWebSocket = useCallback((connectionId: string) => {
     console.log('Initializing WebSocket...');
     socketRef.current = new WebSocket(`${BACKEND_URL.replace('http', 'ws')}/ws?connectionId=${connectionId}`);
