@@ -4,36 +4,30 @@ import AvatarInteraction from './AvatarInteraction';
 import DottedFace from './DottedFace';
 import SimliHeaderLogo from './Logo';
 import Navbar from './Navbar';
-import { Avatar } from './types';
 
-// Update the Avatar interface to include an image URL
+// Avatar 인터페이스 정의
 interface Avatar {
   name: string;
   simli_faceid: string;
   elevenlabs_voiceid: string;
   initialPrompt: string;
-  imageUrl: string;
+  imageUrl?: string;  // optional
 }
 
-// Updated JSON structure for avatar data with image URLs
-const avatar = {
+// 아바타 데이터
+const avatar: Avatar = {
   name: "Chrystal",
   simli_faceid: "74bf81fc-853f-41f6-aaa8-a8772d784327",
-  elevenlabs_voiceid: "1W00IGEmNmwmsDeYy7ag  ",
+  elevenlabs_voiceid: "1W00IGEmNmwmsDeYy7ag",
   initialPrompt: "Say this introduction: Welcome to your local Create-Simli-App, the interactive demo for Simli that you can start building from. You can swap me out with other characters.",
-}
-
-
+};
 
 const Demo: React.FC = () => {
   const [error, setError] = useState('');
   const [showDottedFace, setShowDottedFace] = useState(true);
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
-
   const onStart = () => {
-    console.log("Setting setshowDottedface to false...")
+    console.log("Setting setshowDottedface to false...");
     setShowDottedFace(false);
   };
 
@@ -71,8 +65,6 @@ const Demo: React.FC = () => {
           </li>
         </ul>
         <span className=" mt-[16px]">You can now deploy this app to Vercel, or incorporate it as part of your existing project.</span>
-
-        {/*  <p>You can replace the character by <a href="https://simli.com">creating your own</a> or finding one that you like in the <a href="https://docs.simli.com">docs</a>.</p> */}
       </div>
       {error && <p className="mt-6 text-red-500 bg-red-100 border border-red-400 rounded p-3">{error}</p>}
     </div>
