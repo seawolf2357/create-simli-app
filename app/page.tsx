@@ -18,8 +18,8 @@ interface Avatar {
 // Updated JSON structure for avatar data with image URLs
 const avatar = {
   name: "Chrystal",
-  simli_faceid: "b7da5ed1-2abc-47c8-b7a6-0b018e031a26",
-  elevenlabs_voiceid: "cgSgspJ2msm6clMCkdW9",
+  simli_faceid: "74bf81fc-853f-41f6-aaa8-a8772d784327",
+  elevenlabs_voiceid: "1W00IGEmNmwmsDeYy7ag  ",
   initialPrompt: "Say this introduction: Welcome to your local Create-Simli-App, the interactive demo for Simli that you can start building from. You can swap me out with other characters.",
 }
 
