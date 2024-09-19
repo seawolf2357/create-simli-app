@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { SimliClient } from 'simli-client';
 import VideoBox from './VideoBox';
+
 interface AvatarInteractionProps {
   simli_faceid: string;
   elevenlabs_voiceid: string;
@@ -8,6 +9,8 @@ interface AvatarInteractionProps {
   onStart: () => void;
   showDottedFace: boolean;
 }
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://your-backend-url.com';
 
 const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
   simli_faceid,
@@ -31,48 +34,58 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
 
   const startRecording = async () => {
+    console.log('Starting recording...');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setAudioStream(stream);
       setIsRecording(true);
-      const audioData = new Uint8Array(6000).fill(0);
-      simliClientRef.current?.sendAudioData(audioData);
+      
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(1024, 1, 1);
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      processor.onaudioprocess = (e) => {
+        const audioData = e.inputBuffer.getChannelData(0);
+        console.log('Sending audio data, length:', audioData.length);
+        simliClientRef.current?.sendAudioData(new Float32Array(audioData));
+      };
     } catch (err) {
       console.error('Error accessing microphone:', err);
       setError('Error accessing microphone. Please check your permissions.');
     }
-  }
+  };
 
+  const initializeSimliClient = useCallback(() => {
+    console.log('Initializing SimliClient...');
+    if (videoRef.current && audioRef.current) {
+      const apiKey = process.env.NEXT_PUBLIC_SIMLI_API_KEY;
+      if (!apiKey) {
+        console.error('Simli API key is not set');
+        setError('Simli API key is missing. Please check your environment variables.');
+        return;
+      }
 
-const initializeSimliClient = useCallback(() => {
-  if (videoRef.current && audioRef.current) {
-    const apiKey = process.env.NEXT_PUBLIC_SIMLI_API_KEY;
-    if (!apiKey) {
-      console.error('Simli API key is not set');
-      setError('Simli API key is missing. Please check your environment variables.');
-      return;
+      const SimliConfig = {
+        apiKey: apiKey,
+        faceID: simli_faceid,
+        handleSilence: true,
+        videoRef: videoRef,
+        audioRef: audioRef,
+      };
+
+      simliClientRef.current = new SimliClient();
+      simliClientRef.current.Initialize(SimliConfig);
+      console.log('Simli Client initialized');
     }
+  }, [simli_faceid]);
 
-    const SimliConfig = {
-      apiKey: apiKey,
-      faceID: simli_faceid,
-      handleSilence: true,
-      videoRef: videoRef,
-      audioRef: audioRef,
-    };
-
-    simliClientRef.current = new SimliClient();
-    simliClientRef.current.Initialize(SimliConfig);
-    console.log('Simli Client initialized');
-  }
-}, [simli_faceid]);
-  
-
-
-  /* startConversation() queries our local backend to start an elevenLabs conversation over Websockets */
   const startConversation = useCallback(async () => {
+    console.log('Starting conversation...');
     try {
-      const response = await fetch('http://localhost:8080/start-conversation', {
+      const response = await fetch(`${BACKEND_URL}/start-conversation`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -83,31 +96,35 @@ const initializeSimliClient = useCallback(() => {
         }),
       });
 
+      console.log('Response status:', response.status);
+
       if (!response.ok) {
-        throw new Error('Failed to start conversation');
+        const errorData = await response.json();
+        console.error('Error data:', errorData);
+        throw new Error(errorData.message || 'Failed to start conversation');
       }
 
       const data = await response.json();
-      console.log(data.message);
+      console.log('Conversation started:', data);
       setConnectionId(data.connectionId);
 
-      // After successful response, connect to WebSocket
       initializeWebSocket(data.connectionId);
     } catch (error) {
       console.error('Error starting conversation:', error);
       setError('Failed to start conversation. Please try again.');
     }
-  }, []);
+  }, [initialPrompt, elevenlabs_voiceid]);
 
-  /* initializeWebSocket() sets up a websocket that we can use to talk to our local backend */
   const initializeWebSocket = useCallback((connectionId: string) => {
-    socketRef.current = new WebSocket(`ws://localhost:8080/ws?connectionId=${connectionId}`);
+    console.log('Initializing WebSocket...');
+    socketRef.current = new WebSocket(`${BACKEND_URL.replace('http', 'ws')}/ws?connectionId=${connectionId}`);
 
     socketRef.current.onopen = () => {
-      console.log('Connected to server');
+      console.log('WebSocket connected');
     };
 
     socketRef.current.onmessage = (event) => {
+      console.log('Received message from server:', event.data);
       if (event.data instanceof Blob) {
         event.data.arrayBuffer().then((arrayBuffer) => {
           const uint8Array = new Uint8Array(arrayBuffer);
@@ -115,6 +132,7 @@ const initializeSimliClient = useCallback(() => {
         });
       } else {
         const message = JSON.parse(event.data);
+        console.log('Parsed message:', message);
       }
     };
 
@@ -122,14 +140,15 @@ const initializeSimliClient = useCallback(() => {
       console.error('WebSocket error:', error);
       setError('WebSocket connection error. Please check if the server is running.');
     };
+
+    socketRef.current.onclose = () => {
+      console.log('WebSocket disconnected');
+    };
   }, []);
 
-  /* isWebRTCConnected() checks if SimliClient has an open data channel and peer-connection  */
   const isWebRTCConnected = useCallback(() => {
     if (!simliClientRef.current) return false;
 
-    // Access the private properties of SimliClient
-    // Note: This is not ideal and breaks encapsulation, but it avoids modifying SimliClient
     const pc = (simliClientRef.current as any).pc as RTCPeerConnection | null;
     const dc = (simliClientRef.current as any).dc as RTCDataChannel | null;
 
@@ -138,7 +157,9 @@ const initializeSimliClient = useCallback(() => {
       dc !== null &&
       dc.readyState === 'open';
   }, []);
+
   const handleCancel = useCallback(async () => {
+    console.log('Cancelling interaction...');
     setIsLoading(false);
     setError('');
     setStartWebRTC(false);
@@ -146,10 +167,11 @@ const initializeSimliClient = useCallback(() => {
     setAudioStream(null);
     simliClientRef.current?.close();
     socketRef.current?.close();
-    window.location.href = '/'; /* TODO: Is it bad practice to do this? Just sending user back to '/' */
+    window.location.href = 'https://create-simli-app-nine.vercel.app/';
   }, []);
-  /* handleStart() is called when the Start button is called. It starts the websocket conversation and then checks if webRTC is connected   */
+
   const handleStart = useCallback(async () => {
+    console.log('Starting interaction...');
     startRecording();
     onStart();
     setIsLoading(true);
@@ -161,7 +183,6 @@ const initializeSimliClient = useCallback(() => {
     simliClientRef.current?.start();
     setStartWebRTC(true);
 
-    // Wait for the WebRTC connection to be established
     const checkConnection = async () => {
       if (isWebRTCConnected()) {
         setIsAvatarVisible(true);
@@ -171,12 +192,12 @@ const initializeSimliClient = useCallback(() => {
         console.log('Sent initial audio data');
       } else {
         console.log('Waiting for WebRTC connection...');
-        setTimeout(checkConnection, 1000);  // Check again after 1 second
+        setTimeout(checkConnection, 1000);
       }
     };
 
-    setTimeout(checkConnection, 4000);  // Start checking after 4 seconds
-  }, []);
+    setTimeout(checkConnection, 4000);
+  }, [startConversation, onStart, isWebRTCConnected]);
 
   useEffect(() => {
     initializeSimliClient();
@@ -197,6 +218,7 @@ const initializeSimliClient = useCallback(() => {
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
+          console.log('Sending audio data to WebSocket');
           socketRef.current?.send(event.data);
         }
       };
@@ -234,16 +256,15 @@ const initializeSimliClient = useCallback(() => {
               Stop
             </span>
           </button>
-
         ) : (
           <button
-          onClick={handleCancel}
-          className="w-full mt-4 bg-zinc-700 text-white py-3 justify-center rounded-[100px] backdrop-blur transition-all duration-300 hover:rounded hover:bg-white hover:text-black hover:rounded-sm px-6"
-        >
-          <span className="font-abc-repro-mono font-bold w-[164px]">
-            Loading...
-          </span>
-        </button>
+            onClick={handleCancel}
+            className="w-full mt-4 bg-zinc-700 text-white py-3 justify-center rounded-[100px] backdrop-blur transition-all duration-300 hover:rounded hover:bg-white hover:text-black hover:rounded-sm px-6"
+          >
+            <span className="font-abc-repro-mono font-bold w-[164px]">
+              Loading...
+            </span>
+          </button>
         )}
       </div>
       {error && <p className="mt-4 text-red-500">{error}</p>}
