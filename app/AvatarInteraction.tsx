@@ -44,22 +44,30 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
   }
 
 
-  /* initializeSimliClient() initializes a new client if videoRef and audioRef are set */
-  const initializeSimliClient = useCallback(() => {
-    if (videoRef.current && audioRef.current) {
-      const SimliConfig = {
-        apiKey: process.env.NEXT_PUBLIC_SIMLI_API_KEY,
-        faceID: simli_faceid,
-        handleSilence: true,
-        videoRef: videoRef,
-        audioRef: audioRef,
-      };
-
-      simliClientRef.current = new SimliClient();
-      simliClientRef.current.Initialize(SimliConfig);
-      console.log('Simli Client initialized');
+const initializeSimliClient = useCallback(() => {
+  if (videoRef.current && audioRef.current) {
+    const apiKey = process.env.NEXT_PUBLIC_SIMLI_API_KEY;
+    if (!apiKey) {
+      console.error('Simli API key is not set');
+      setError('Simli API key is missing. Please check your environment variables.');
+      return;
     }
-  }, []);
+
+    const SimliConfig = {
+      apiKey: apiKey,
+      faceID: simli_faceid,
+      handleSilence: true,
+      videoRef: videoRef,
+      audioRef: audioRef,
+    };
+
+    simliClientRef.current = new SimliClient();
+    simliClientRef.current.Initialize(SimliConfig);
+    console.log('Simli Client initialized');
+  }
+}, [simli_faceid]);
+  
+
 
   /* startConversation() queries our local backend to start an elevenLabs conversation over Websockets */
   const startConversation = useCallback(async () => {
