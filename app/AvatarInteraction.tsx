@@ -36,26 +36,43 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
   const startRecording = async () => {
     console.log('Starting recording...');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       setAudioStream(stream);
       setIsRecording(true);
       
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const processor = audioContext.createScriptProcessor(2048, 1, 1);
 
       source.connect(processor);
       processor.connect(audioContext.destination);
 
+      let lastAudioTimestamp = 0;
+      const SEND_INTERVAL = 100; // 100ms
+
       processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
-        const outputData = new Float32Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          outputData[i] = Math.max(-1, Math.min(1, inputData[i])); // Clamp values
+        const currentTime = Date.now();
+        
+        if (currentTime - lastAudioTimestamp >= SEND_INTERVAL) {
+          const outputData = new Float32Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            // Apply a simple noise gate
+            outputData[i] = Math.abs(inputData[i]) > 0.01 ? inputData[i] : 0;
+          }
+          
+          const uint8Array = new Uint8Array(outputData.buffer);
+          console.log('Sending audio data, length:', uint8Array.length);
+          simliClientRef.current?.sendAudioData(uint8Array);
+          
+          lastAudioTimestamp = currentTime;
         }
-        const uint8Array = new Uint8Array(outputData.buffer);
-        console.log('Sending audio data, length:', uint8Array.length);
-        simliClientRef.current?.sendAudioData(uint8Array);
       };
     } catch (err) {
       console.error('Error accessing microphone:', err);
@@ -87,42 +104,43 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
     }
   }, [simli_faceid]);
 
-const startConversation = useCallback(async () => {
-  console.log('Starting conversation...');
-  try {
-    const response = await fetch(`${BACKEND_URL}/start-conversation`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        prompt: initialPrompt,
-        voiceId: elevenlabs_voiceid
-      }),
-    });
+  const startConversation = useCallback(async () => {
+    console.log('Starting conversation...');
+    try {
+      const response = await fetch(`${BACKEND_URL}/start-conversation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: initialPrompt,
+          voiceId: elevenlabs_voiceid
+        }),
+      });
 
-    console.log('Response status:', response.status);
+      console.log('Response status:', response.status);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Error response:', errorText);
-      throw new Error(errorText || 'Failed to start conversation');
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(errorText || 'Failed to start conversation');
+      }
+
+      const data = await response.json();
+      console.log('Conversation started:', data);
+      setConnectionId(data.connectionId);
+
+      initializeWebSocket(data.connectionId);
+    } catch (error: unknown) {
+      console.error('Error starting conversation:', error);
+      if (error instanceof Error) {
+        setError(`Failed to start conversation: ${error.message}`);
+      } else {
+        setError('Failed to start conversation: Unknown error');
+      }
     }
+  }, [initialPrompt, elevenlabs_voiceid]);
 
-    const data = await response.json();
-    console.log('Conversation started:', data);
-    setConnectionId(data.connectionId);
-
-    initializeWebSocket(data.connectionId);
-  } catch (error: unknown) {
-    console.error('Error starting conversation:', error);
-    if (error instanceof Error) {
-      setError(`Failed to start conversation: ${error.message}`);
-    } else {
-      setError('Failed to start conversation: Unknown error');
-    }
-  }
-}, [initialPrompt, elevenlabs_voiceid]);
   const initializeWebSocket = useCallback((connectionId: string) => {
     console.log('Initializing WebSocket...');
     socketRef.current = new WebSocket(`${BACKEND_URL.replace('http', 'ws')}/ws?connectionId=${connectionId}`);
@@ -136,7 +154,23 @@ const startConversation = useCallback(async () => {
       if (event.data instanceof Blob) {
         event.data.arrayBuffer().then((arrayBuffer) => {
           const uint8Array = new Uint8Array(arrayBuffer);
-          simliClientRef.current?.sendAudioData(uint8Array);
+          console.log('Received audio data, length:', uint8Array.length);
+          
+          // Convert Uint8Array to Float32Array
+          const float32Array = new Float32Array(uint8Array.buffer);
+          
+          // Apply a simple low-pass filter
+          const filteredData = new Float32Array(float32Array.length);
+          let lastSample = 0;
+          for (let i = 0; i < float32Array.length; i++) {
+            filteredData[i] = 0.5 * float32Array[i] + 0.5 * lastSample;
+            lastSample = filteredData[i];
+          }
+          
+          // Convert back to Uint8Array
+          const filteredUint8Array = new Uint8Array(filteredData.buffer);
+          
+          simliClientRef.current?.sendAudioData(filteredUint8Array);
         });
       } else {
         const message = JSON.parse(event.data);
@@ -275,7 +309,17 @@ const startConversation = useCallback(async () => {
           </button>
         )}
       </div>
-      {error && <p className="mt-4 text-red-500">{error}</p>}
+      {error && (
+        <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+          <p>{error}</p>
+          <button 
+            onClick={() => setError('')} 
+            className="mt-2 text-sm text-red-600 hover:text-red-800"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
     </>
   );
 };
