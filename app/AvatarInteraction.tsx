@@ -42,15 +42,19 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
       
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(1024, 1, 1);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
 
       source.connect(processor);
       processor.connect(audioContext.destination);
 
       processor.onaudioprocess = (e) => {
-        const audioData = e.inputBuffer.getChannelData(0);
-        console.log('Sending audio data, length:', audioData.length);
-        const uint8Array = new Uint8Array(audioData.buffer);
+        const inputData = e.inputBuffer.getChannelData(0);
+        const outputData = new Float32Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          outputData[i] = Math.max(-1, Math.min(1, inputData[i])); // Clamp values
+        }
+        const uint8Array = new Uint8Array(outputData.buffer);
+        console.log('Sending audio data, length:', uint8Array.length);
         simliClientRef.current?.sendAudioData(uint8Array);
       };
     } catch (err) {
@@ -100,9 +104,9 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
       console.log('Response status:', response.status);
 
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Error data:', errorData);
-        throw new Error(errorData.message || 'Failed to start conversation');
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(errorText || 'Failed to start conversation');
       }
 
       const data = await response.json();
@@ -112,7 +116,7 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
       initializeWebSocket(data.connectionId);
     } catch (error) {
       console.error('Error starting conversation:', error);
-      setError('Failed to start conversation. Please try again.');
+      setError(`Failed to start conversation: ${error.message}`);
     }
   }, [initialPrompt, elevenlabs_voiceid]);
 
