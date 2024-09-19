@@ -50,7 +50,8 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
       processor.onaudioprocess = (e) => {
         const audioData = e.inputBuffer.getChannelData(0);
         console.log('Sending audio data, length:', audioData.length);
-        simliClientRef.current?.sendAudioData(new Float32Array(audioData));
+        const uint8Array = new Uint8Array(audioData.buffer);
+        simliClientRef.current?.sendAudioData(uint8Array);
       };
     } catch (err) {
       console.error('Error accessing microphone:', err);
