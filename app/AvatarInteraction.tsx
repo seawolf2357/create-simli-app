@@ -33,53 +33,59 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
   const [isRecording, setIsRecording] = useState(false);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
 
-  const startRecording = async () => {
-    console.log('Starting recording...');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        } 
-      });
-      setAudioStream(stream);
-      setIsRecording(true);
+const startRecording = async () => {
+  console.log('Starting recording...');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      } 
+    });
+    setAudioStream(stream);
+    setIsRecording(true);
+    
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+
+    let lastAudioTimestamp = 0;
+    const SEND_INTERVAL = 100; // 100ms
+
+    processor.onaudioprocess = (e) => {
+      const inputData = e.inputBuffer.getChannelData(0);
+      const currentTime = Date.now();
       
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(2048, 1, 1);
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
-      let lastAudioTimestamp = 0;
-      const SEND_INTERVAL = 100; // 100ms
-
-      processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        const currentTime = Date.now();
-        
-        if (currentTime - lastAudioTimestamp >= SEND_INTERVAL) {
-          const outputData = new Float32Array(inputData.length);
-          for (let i = 0; i < inputData.length; i++) {
-            // Apply a simple noise gate
-            outputData[i] = Math.abs(inputData[i]) > 0.01 ? inputData[i] : 0;
-          }
-          
-          const uint8Array = new Uint8Array(outputData.buffer);
-          console.log('Sending audio data, length:', uint8Array.length);
-          simliClientRef.current?.sendAudioData(uint8Array);
-          
-          lastAudioTimestamp = currentTime;
+      if (currentTime - lastAudioTimestamp >= SEND_INTERVAL) {
+        const outputData = new Float32Array(inputData.length);
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          // Apply a simple noise gate and low-pass filter
+          outputData[i] = Math.abs(inputData[i]) > 0.01 ? inputData[i] : 0;
+          sum += outputData[i] * outputData[i];
         }
-      };
-    } catch (err) {
-      console.error('Error accessing microphone:', err);
-      setError('Error accessing microphone. Please check your permissions.');
-    }
-  };
+        
+        const rms = Math.sqrt(sum / inputData.length);
+        if (rms > 0.01) {  // Only send if there's significant audio
+          const uint8Array = new Uint8Array(outputData.buffer);
+          console.log('Sending audio data, length:', uint8Array.length, 'RMS:', rms);
+          simliClientRef.current?.sendAudioData(uint8Array);
+        }
+        
+        lastAudioTimestamp = currentTime;
+      }
+    };
+  } catch (err) {
+    console.error('Error accessing microphone:', err);
+    setError('Error accessing microphone. Please check your permissions.');
+  }
+};
 
+  
   const initializeSimliClient = useCallback(() => {
     console.log('Initializing SimliClient...');
     if (videoRef.current && audioRef.current) {
@@ -104,43 +110,45 @@ const AvatarInteraction: React.FC<AvatarInteractionProps> = ({
     }
   }, [simli_faceid]);
 
-  const startConversation = useCallback(async () => {
-    console.log('Starting conversation...');
-    try {
-      const response = await fetch(`${BACKEND_URL}/start-conversation`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: initialPrompt,
-          voiceId: elevenlabs_voiceid
-        }),
-      });
+const startConversation = useCallback(async () => {
+  console.log('Starting conversation...');
+  try {
+    console.log(`Sending request to ${BACKEND_URL}/start-conversation`);
+    const response = await fetch(`${BACKEND_URL}/start-conversation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: initialPrompt,
+        voiceId: elevenlabs_voiceid
+      }),
+    });
 
-      console.log('Response status:', response.status);
+    console.log('Response status:', response.status);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
-        throw new Error(errorText || 'Failed to start conversation');
-      }
-
-      const data = await response.json();
-      console.log('Conversation started:', data);
-      setConnectionId(data.connectionId);
-
-      initializeWebSocket(data.connectionId);
-    } catch (error: unknown) {
-      console.error('Error starting conversation:', error);
-      if (error instanceof Error) {
-        setError(`Failed to start conversation: ${error.message}`);
-      } else {
-        setError('Failed to start conversation: Unknown error');
-      }
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Error response:', errorText);
+      throw new Error(errorText || 'Failed to start conversation');
     }
-  }, [initialPrompt, elevenlabs_voiceid]);
 
+    const data = await response.json();
+    console.log('Conversation started:', data);
+    setConnectionId(data.connectionId);
+
+    initializeWebSocket(data.connectionId);
+  } catch (error: unknown) {
+    console.error('Error starting conversation:', error);
+    if (error instanceof Error) {
+      setError(`Failed to start conversation: ${error.message}`);
+    } else {
+      setError('Failed to start conversation: Unknown error');
+    }
+  }
+}, [initialPrompt, elevenlabs_voiceid]);
+
+  
   const initializeWebSocket = useCallback((connectionId: string) => {
     console.log('Initializing WebSocket...');
     socketRef.current = new WebSocket(`${BACKEND_URL.replace('http', 'ws')}/ws?connectionId=${connectionId}`);
